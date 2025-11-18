@@ -45,8 +45,8 @@ class Server:
                     for other_user in self.clients:
                         if other_user != self.clients:
                             other_user_sock: socket.socket = self.clients.get(
-                                other_user
-                            )
+                                other_user, {}
+                            ).get("socket")
                             other_user_sock.send(
                                 system_response_packet(
                                     to_user=other_user,
@@ -89,7 +89,7 @@ class Server:
             data.get("enc_message"),
         )
         with self.lock:
-            recipient_sock: socket.socket = self.clients.get(to_user)
+            recipient_sock: socket.socket = self.clients.get(to_user, {}).get("socket")
 
         if recipient_sock:
             recipient_sock.send(create_packet(data))
@@ -128,8 +128,10 @@ class Server:
                     )
                     c_sock.close()
                 else:
-                    self.clients[username] = c_sock
-                    self.public_keys[username] = public_key
+                    self.clients[username] = {
+                        "socket": c_sock,
+                        "public_key": public_key,
+                    }
                     log(
                         level="info",
                         message=f"User '{from_user}' has registered and is now connected.",
@@ -165,7 +167,7 @@ class Server:
         elif action == "get_public_key":
             target = data.get("payload", {}).get("target")
             with self.lock:
-                target_public_key = self.public_keys.get(target)
+                target_public_key = self.clients.get(target, {}).get("public_key")
 
             log(
                 level="info",
@@ -203,9 +205,6 @@ class Server:
         with self.lock:
             if username in self.clients:
                 del self.clients[username]
-            if username in self.public_keys:
-                del self.public_keys[username]
-
         log(level="info", message=f"User '{username}' has disconnected.")
 
 
