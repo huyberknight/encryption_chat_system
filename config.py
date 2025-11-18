@@ -1,3 +1,4 @@
+# config.py
 HOST = "127.0.0.1"
 PORT = 1234
 BUFFER_SIZE = 8192

@@ -3,6 +3,7 @@ import socket, threading
 from config import *
 from packet import *
 from crypto import *
+from logger import log
 from time import sleep
 from os import _exit
 
@@ -25,7 +26,7 @@ class Client:
             if self.username != "":
                 break
             else:
-                print(f"[ERROR] Please enter valid username!")
+                log(level="error", message=f"Please enter valid username.")
                 continue
         self.public_key, self.private_key = generate_key_pair()
 
@@ -42,9 +43,9 @@ class Client:
             threading.Thread(target=self._recv_packet, daemon=True).start()
             self._handle_user_input()
         except ConnectionRefusedError:
-            print("[ERROR] Count not connect to the server!")
+            log(level="error", message="Count not connect to the server.")
         except KeyboardInterrupt:
-            print("[INFO] Exiting...")
+            log(level="info", message="Exiting...")
         finally:
             self.c_sock.close()
 
@@ -53,7 +54,7 @@ class Client:
             try:
                 raw_data = self.c_sock.recv(BUFFER_SIZE)
                 if not raw_data:
-                    print("\n[INFO] Disconnected from server.")
+                    log(level="info", message="Disconnected from the server.")
                     break
 
                 data = parse_packet(data=raw_data)
@@ -64,10 +65,10 @@ class Client:
                 elif data_type == "message":
                     self._handle_message_packet_response(data=data)
             except (ConnectionResetError, ConnectionAbortedError):
-                print("\n[INFO] Connection to server lost.")
+                log(level="info", message="Connection to the server was lost.")
                 break
             except Exception as e:
-                print(f"\n[ERROR] An error occurred: {e}")
+                log(level="error", message=f"An unexpected error occurred: {e}")
                 break
 
     def _handle_message_packet_response(self, data: dict):
@@ -85,16 +86,21 @@ class Client:
                 from_user=from_user, signature=signature, dec_message=dec_message
             )
         except Exception as e:
-            print(f"[ERROR] Failed to decrypt or verify message signature: {e}")
+            log(
+                level="error",
+                message=f"Failed to decrypt or verify the message signature: {e}",
+            )
 
     def _handle_system_packet_response(self, data: dict):
         if data.get("status") == "error":
-            print(f"[ERROR] {data.get('result')}")
+            log(level="error", message=f"{data.get('result')}")
             sleep(1)
+
             if "Username already taken" in data.get("result"):
-                print("[INFO] The client will now exit!")
+                log(level="info", message="The client will now exit.")
                 self.c_sock.close()
                 _exit(1)
+
         elif data.get("status") == "ok":
             action = data.get("action")
             if action == "get_online_users":
@@ -155,10 +161,16 @@ class Client:
                     self._prepare_send_message(to_user=to_user, message=message)
 
                 except ValueError:
-                    print(f"[ERROR] Invalid syntax. Use: @username <message>")
+                    log(
+                        level="error",
+                        message="Invalid syntax. Use: @username <message>",
+                    )
             else:
                 if user_input:
-                    print("[ERROR] Unknown command. Type 'help' for instructions.")
+                    log(
+                        level="error",
+                        message="Unknown command. Type 'help' for instructions.",
+                    )
 
     def _prepare_verify_message(self, from_user: str, signature: str, dec_message: str):
         if from_user in self.public_keys_cache:
@@ -171,7 +183,10 @@ class Client:
                 "signature": signature,
                 "dec_message": dec_message,
             }
-            print(f"[INFO] Waiting for {from_user}'s public key to verify message...")
+            log(
+                level="info",
+                message=f"Waiting for '{from_user}' public key to verify the message...",
+            )
             self.c_sock.send(
                 system_request_packet(
                     from_user=self.username,
@@ -190,20 +205,22 @@ class Client:
         if verify_message == True:
             print(f"[{from_user}] -> you: {dec_message}")
         else:
-            print(
-                f"[ERROR] Signature verification failed for message from {from_user}."
+            log(
+                level="error",
+                message=f"Signature verification failed for the message from '{from_user}'.",
             )
 
     def _prepare_send_message(self, to_user: str, message: str):
         if to_user == self.username:
-            print(f"[ERROR] You cannot send a message to yourself!")
+            log(level="error", message=f"You cannot send a message to yourself.")
             return
 
         if to_user in self.public_keys_cache:
             self._send_message(to_user=to_user, message=message)
         else:
-            print(
-                f"[INFO] Public key for user '{to_user}' not found. Requesting from server..."
+            log(
+                level="info",
+                message=f"Public key for '{to_user}' not found. Requesting it from the server...",
             )
             sleep(1)
             self.pending_message[to_user] = message
@@ -237,7 +254,7 @@ class Client:
                 )
             )
         except Exception as e:
-            print(f"[ERROR] Failed to send message: {e}")
+            log(level="error", message=f"Failed to send the message: {e}")
 
 
 if __name__ == "__main__":
