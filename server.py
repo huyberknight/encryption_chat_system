@@ -1,7 +1,7 @@
 # server.py
-import socket, threading
-from config import *
-from packet import *
+import socket, threading, json
+from config import BUFFER_SIZE, HOST, PORT
+from packet import parse_packet, system_response_packet, create_packet
 from logger import log
 
 
@@ -11,26 +11,26 @@ class Server:
         self.port = port
         self.s_sock = None
         self.clients = {}
-        self.public_keys = {}
         self.lock = threading.Lock()
 
     def start(self):
-        self.s_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.s_sock.bind((self.host, self.port))
-        self.s_sock.listen()
-        log(level="info", message=f"Server is starting...")
-        log(level="info", message=f"Server listening on {self.host}:{self.port}")
-
         try:
+            self.s_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.s_sock.bind((self.host, self.port))
+            self.s_sock.listen()
+            log(level="info", message=f"Server is starting...")
+            log(level="info", message=f"Server listening on {self.host}:{self.port}")
             while True:
                 c_sock, c_addr = self.s_sock.accept()
                 log(
                     level="info",
-                    message=f"Client connected from {c_addr[0]}:{c_addr[1]}",
+                    message=f"New client connected from {c_addr[0]}:{c_addr[1]}",
                 )
                 threading.Thread(
                     target=self._handle_client, args=(c_sock, c_addr), daemon=True
                 ).start()
+        except OSError as e:
+            log(level="error", message=f"{e}")
         except KeyboardInterrupt:
             log(level="info", message=f"Server shutting down...")
         finally:

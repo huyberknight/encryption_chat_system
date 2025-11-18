@@ -1,11 +1,11 @@
 # client.py
 import socket, threading
-from config import *
-from packet import *
+from os import _exit
+from time import sleep
+from config import BUFFER_SIZE, HOST, PORT
+from packet import system_request_packet, message_packet, parse_packet
 from crypto import *
 from logger import log
-from time import sleep
-from os import _exit
 
 
 class Client:
@@ -70,6 +70,7 @@ class Client:
             except Exception as e:
                 log(level="error", message=f"An unexpected error occurred: {e}")
                 break
+        _exit(1)
 
     def _handle_message_packet_response(self, data: dict):
         from_user, enc_key, enc_message, signature = (
@@ -120,7 +121,7 @@ class Client:
                 if target in self.pending_message:
                     message = self.pending_message.pop(target)
                     self._send_message(to_user=target, message=message)
-                    # print(f"[INFO] Message sent to user '{target}'.")
+                    log(level="info", message=f"Message sent to user '{target}'.")
 
                 if target in self.pending_verify:
                     verify_message_target = self.pending_verify.pop(target)
