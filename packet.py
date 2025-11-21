@@ -22,12 +22,11 @@ def system_request_packet(from_user: str, action: str, payload=None):
     )
 
 
-def system_response_packet(to_user: str, action, status: str, result=None):
+def system_response_packet(to_user: str, action, result=None):
     return create_packet(
         {
             "type": "system",
             "action": action,
-            "status": status,
             "from": "server",
             "to": to_user,
             "result": result,

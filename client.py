@@ -1,5 +1,5 @@
 # client.py
-import socket, threading
+import socket, threading, json
 from os import _exit
 from time import sleep
 from config import BUFFER_SIZE, HOST, PORT
@@ -33,11 +33,18 @@ class Client:
         try:
             self.c_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.c_sock.connect((self.host, self.port))
+            # self.c_sock.send(
+            #     system_request_packet(
+            #         from_user=self.username,
+            #         action="register",
+            #         payload={"username": self.username, "public_key": self.public_key},
+            #     )
+            # )
             self.c_sock.send(
                 system_request_packet(
                     from_user=self.username,
-                    action="register",
-                    payload={"username": self.username, "public_key": self.public_key},
+                    action="handshake",
+                    payload={"message": "hello_server"},
                 )
             )
             threading.Thread(target=self._recv_packet, daemon=True).start()
@@ -102,49 +109,97 @@ class Client:
         """
         Handle system type packets sent by the server
         """
-        if data.get("status") == "error":
-            log(level="error", message=f"{data.get('result')}")
-            sleep(1)
-
-            if "Username already taken" in data.get("result"):
-                log(level="info", message="The client will now exit.")
-                self.c_sock.close()
-                _exit(1)
-
-        elif data.get("status") == "ok":
-            action = data.get("action")
-            if action == "get_online_users":
-                online_users = data.get("result")
-                print("--- Online users ---")
-                for user in online_users:
-                    print(f" - {user}")
-                print("--- ------------ ---")
-            elif action == "get_public_key":
-                target, public_key = (
-                    data.get("result", {}).get("target"),
-                    data.get("result", {}).get("public_key"),
+        action = data.get("action")
+        if action == "handshake":
+            log(level="info", message="Authenticating server…")
+            with open("ca_public.pem", "r") as f:
+                ca_public = f.read()
+            certification = data.get("result", {}).get("certification")
+            s_public_key = certification.get("public_key")
+            # fake_public_key, fake_private_key = generate_key_pair()
+            # certification = {
+            #     "server_name": "FakeServer",
+            #     "public_key": fake_public_key,
+            # }
+            signature = data.get("result", {}).get("signature")
+            verify_server = verify_signature(
+                public_pem=ca_public,
+                signature_b64=signature,
+                message=json.dumps(certification),
+            )
+            if verify_server:
+                log(level="info", message="Authentication successful.")
+                self.session_key = get_random_bytes(32)
+                # print(self.session_key)
+                enc_session_key = rsa_encrypt(
+                    plain_text=self.session_key, public_pem=s_public_key
                 )
-                self.public_keys_cache[target] = public_key
-                # print(self.public_keys_cache)
-                # print(self.pending_message)
-                if target in self.pending_message:
-                    message = self.pending_message.pop(target)
-                    self._send_message(to_user=target, message=message)
-                    log(level="info", message=f"Message sent to user '{target}'.")
-
-                if target in self.pending_verify:
-                    verify_message_target = self.pending_verify.pop(target)
-                    signature = verify_message_target.get("signature")
-                    dec_message = verify_message_target.get("dec_message")
-                    # print(signature)
-                    # print(message)
-                    self._verify_message(
-                        from_user=target, signature=signature, dec_message=dec_message
+                self.c_sock.send(
+                    system_request_packet(
+                        from_user=self.username,
+                        action="register",
+                        payload={
+                            "username": self.username,
+                            "session_key": enc_session_key,
+                            "public_key": aes_encrypt(
+                                plain_text=self.public_key, key=self.session_key
+                            ),
+                        },
                     )
-            elif action == "user_disconnected":
-                target = data.get("result", {}).get("target")
-                if target in self.public_keys_cache:
-                    del self.public_keys_cache[target]
+                )
+            else:
+                log(level="error", message="Failed to authenticate server.")
+                _exit(1)
+        else:
+            enc_result = data.get("result")
+            result = json.loads(
+                aes_decrypt(cipher_text_b64=enc_result, key=self.session_key)
+            )
+            # print(result)
+            if result.get("status") == "error":
+                log(level="error", message=f"{result.get('message')}")
+                sleep(1)
+                if "Username already taken" in result.get("message"):
+                    log(level="info", message="The client will now exit.")
+                    self.c_sock.close()
+                    _exit(1)
+            elif result.get("status") == "ok":
+                if action == "get_online_users":
+                    online_users = result.get("users")
+                    print("--- Online users ---")
+                    for user in online_users:
+                        print(f" - {user}")
+                    print("--- ------------ ---")
+                elif action == "get_public_key":
+                    target, target_public_key = (
+                        result.get("target"),
+                        result.get("public_key"),
+                    )
+                    # print(target)
+                    # print(target_public_key)
+
+                    self.public_keys_cache[target] = target_public_key
+                    # print(self.public_keys_cache)
+                    # print(self.pending_message)
+                    if target in self.pending_message:
+                        message = self.pending_message.pop(target)
+                        self._send_message(to_user=target, message=message)
+
+                    if target in self.pending_verify:
+                        verify_message_target = self.pending_verify.pop(target)
+                        signature = verify_message_target.get("signature")
+                        dec_message = verify_message_target.get("dec_message")
+                        # print(signature)
+                        # print(message)
+                        self._verify_message(
+                            from_user=target,
+                            signature=signature,
+                            dec_message=dec_message,
+                        )
+                elif action == "user_disconnected":
+                    target = result.get("target")
+                    if target in self.public_keys_cache:
+                        del self.public_keys_cache[target]
 
     def _handle_user_input(self):
         """
@@ -172,7 +227,6 @@ class Client:
                     if not to_user or not message:
                         raise ValueError
                     self._prepare_send_message(to_user=to_user, message=message)
-
                 except ValueError:
                     log(
                         level="error",
@@ -203,13 +257,14 @@ class Client:
                 level="info",
                 message=f"Waiting for '{from_user}' public key to verify the message...",
             )
+            enc_payload = aes_encrypt(
+                plain_text=json.dumps({"target": from_user}), key=self.session_key
+            )
             self.c_sock.send(
                 system_request_packet(
                     from_user=self.username,
                     action="get_public_key",
-                    payload={
-                        "target": from_user,
-                    },
+                    payload=enc_payload,
                 )
             )
 
@@ -247,13 +302,14 @@ class Client:
             )
             sleep(1)
             self.pending_message[to_user] = message
+            enc_payload = aes_encrypt(
+                plain_text=json.dumps({"target": to_user}), key=self.session_key
+            )
             self.c_sock.send(
                 system_request_packet(
                     from_user=self.username,
                     action="get_public_key",
-                    payload={
-                        "target": to_user,
-                    },
+                    payload=enc_payload,
                 )
             )
         # print(self.public_keys_cache)
@@ -279,6 +335,7 @@ class Client:
                     signature=signature,
                 )
             )
+            log(level="info", message=f"Message sent to user '{to_user}'.")
         except Exception as e:
             log(level="error", message=f"Failed to send the message: {e}")
 
